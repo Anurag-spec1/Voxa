@@ -10,88 +10,55 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 
 object NotificationHelper {
-
-    private const val CHANNEL_ID = "jarvis_channel"
-    private const val CHANNEL_NAME = "JARVIS Service"
-
-    const val MAIN_NOTIFICATION_ID = 100
-    const val WAKE_WORD_NOTIFICATION_ID = 101
-    const val HUD_NOTIFICATION_ID = 102
-    const val SAFETY_NOTIFICATION_ID = 103
-
-    fun createMainNotification(context: Context): Notification {
-        createNotificationChannel(context)
-
-        val intent = Intent(context, MainActivity::class.java)
-        val pendingIntent = PendingIntent.getActivity(
-            context, 0, intent,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-
-        return NotificationCompat.Builder(context, CHANNEL_ID)
-            .setContentTitle("JARVIS ∞")
-            .setContentText("God Mode Active")
-            .setSmallIcon(R.drawable.ic_jarvis)
-            .setContentIntent(pendingIntent)
-            .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_MAX)
-            .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .build()
-    }
-
-    fun createWakeWordNotification(context: Context): Notification {
-        return NotificationCompat.Builder(context, CHANNEL_ID)
-            .setContentTitle("JARVIS Ears")
-            .setContentText("Listening for 'Hey Jarvis'")
-            .setSmallIcon(R.drawable.ic_mic)
-            .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .build()
-    }
+    const val HUD_CHANNEL_ID = "hud_service_channel"
+    const val HUD_NOTIFICATION_ID = 1003
 
     fun createHUDNotification(context: Context): Notification {
-        return NotificationCompat.Builder(context, CHANNEL_ID)
-            .setContentTitle("JARVIS HUD")
-            .setContentText("Floating interface active")
-            .setSmallIcon(R.drawable.ic_hud)
-            .setOngoing(true)
+        createNotificationChannel(context)
+
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        }
+
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            0,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        return NotificationCompat.Builder(context, HUD_CHANNEL_ID)
+            .setContentTitle("JARVIS ∞ HUD")
+            .setContentText("Voice assistant overlay")
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentIntent(pendingIntent)
             .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOngoing(true)
+            .setAutoCancel(false)
+            .setSound(null)
+            .setVibrate(null)
+            .setOnlyAlertOnce(true)
             .build()
-    }
-
-    fun showSafetyNotification(context: Context, message: String) {
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setContentTitle("⚠️ JARVIS Safety")
-            .setContentText(message)
-            .setSmallIcon(R.drawable.ic_warning)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setAutoCancel(true)
-            .build()
-
-        val notificationManager = context.getSystemService(
-            Context.NOTIFICATION_SERVICE
-        ) as NotificationManager
-
-        notificationManager.notify(SAFETY_NOTIFICATION_ID, notification)
     }
 
     private fun createNotificationChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channelName = "HUD Overlay"
+            val channelDescription = "Shows voice assistant overlay"
+            val importance = NotificationManager.IMPORTANCE_LOW
+
             val channel = NotificationChannel(
-                CHANNEL_ID,
-                CHANNEL_NAME,
-                NotificationManager.IMPORTANCE_HIGH
+                HUD_CHANNEL_ID,
+                channelName,
+                importance
             ).apply {
-                description = "JARVIS Automation Service"
+                description = channelDescription
                 setSound(null, null)
-                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+                lockscreenVisibility = Notification.VISIBILITY_PRIVATE
             }
 
-            val notificationManager = context.getSystemService(
-                Context.NOTIFICATION_SERVICE
-            ) as NotificationManager
-
+            val notificationManager =
+                context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             notificationManager.createNotificationChannel(channel)
         }
     }

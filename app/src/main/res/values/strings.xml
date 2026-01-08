@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Voxa</string>
+    <string name="accessibility_service_description">JARVIS Automation Service - Controls your device with voice commands</string>
 </resources>

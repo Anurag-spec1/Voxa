@@ -3,10 +3,6 @@ package com.anurag.voxa
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Rect
-import android.media.Image
-import android.media.ImageReader
-import android.media.projection.MediaProjection
-import android.media.projection.MediaProjectionManager
 import android.util.Log
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
@@ -18,12 +14,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 object VisionEngine {
 
     private const val TAG = "VisionEngine"
     private lateinit var textRecognizer: TextRecognizer
-    private var mediaProjection: MediaProjection? = null
     private val scope = CoroutineScope(Dispatchers.IO)
 
     fun initialize(context: Context) {

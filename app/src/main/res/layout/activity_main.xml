@@ -185,6 +185,12 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="Accessibility Settings" />
+
+                <Button
+                    android:id="@+id/btn_test_accessibility"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Test Accessibility" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

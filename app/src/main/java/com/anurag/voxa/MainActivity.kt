@@ -2,13 +2,18 @@ package com.anurag.voxa
 
 import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
+import android.util.Log
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import com.google.android.material.switchmaterial.SwitchMaterial
@@ -17,6 +22,7 @@ import kotlinx.coroutines.launch
 class MainActivity : AppCompatActivity() {
 
     companion object {
+        private const val TAG = "MainActivity"
         private const val PERMISSION_REQUEST_CODE = 1001
         private const val OVERLAY_PERMISSION_REQUEST = 1002
         private const val ACCESSIBILITY_SETTINGS = 1003
@@ -30,13 +36,20 @@ class MainActivity : AppCompatActivity() {
     private lateinit var textStatus: TextView
     private lateinit var textMemory: TextView
 
+    private val handler = Handler(Looper.getMainLooper())
+    private val accessibilityCheckRunnable = object : Runnable {
+        override fun run() {
+            updateStatus()
+            handler.postDelayed(this, 2000)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
         initializeViews()
         setupClickListeners()
-        checkPermissions()
         updateStatus()
     }
 
@@ -57,7 +70,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupClickListeners() {
         btnStart.setOnClickListener {
-            startJarvis()
+            if (checkAllRequirements()) {
+                startJarvis()
+            } else {
+                showMissingRequirementsDialog()
+            }
         }
 
         btnStop.setOnClickListener {
@@ -66,7 +83,7 @@ class MainActivity : AppCompatActivity() {
 
         switchWakeWord.setOnCheckedChangeListener { _, isChecked ->
             if (isChecked && !hasRecordAudioPermission()) {
-                requestPermissions()
+                requestMissingPermissions() // Fixed: This function exists now
             }
         }
 
@@ -85,7 +102,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         findViewById<Button>(R.id.btn_permissions).setOnClickListener {
-            requestPermissions()
+            requestAllMissingPermissions()
         }
 
         findViewById<Button>(R.id.btn_test).setOnClickListener {
@@ -97,15 +114,44 @@ class MainActivity : AppCompatActivity() {
             updateMemoryStats()
             Toast.makeText(this, "Memory cleared", Toast.LENGTH_SHORT).show()
         }
+
+        // Test button for debugging
+        findViewById<Button>(R.id.btn_test_accessibility)?.setOnClickListener {
+            testAccessibility()
+        }
+    }
+
+    // ADD THIS MISSING FUNCTION:
+    private fun requestMissingPermissions() {
+        val permissions = mutableListOf<String>()
+
+        if (!hasRecordAudioPermission()) {
+            permissions.add(Manifest.permission.RECORD_AUDIO)
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (!hasVibrationPermission()) {
+                permissions.add(Manifest.permission.VIBRATE)
+            }
+            if (!hasNotificationPermission()) {
+                permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+
+        if (permissions.isNotEmpty()) {
+            ActivityCompat.requestPermissions(
+                this,
+                permissions.toTypedArray(),
+                PERMISSION_REQUEST_CODE
+            )
+        }
+
+        if (!hasOverlayPermission()) {
+            requestOverlayPermission()
+        }
     }
 
     private fun startJarvis() {
-        if (!hasAllPermissions()) {
-            Toast.makeText(this, "Grant all permissions first", Toast.LENGTH_SHORT).show()
-            requestPermissions()
-            return
-        }
-
         // Start services
         startJarvisService()
         startWakeWordService()
@@ -120,7 +166,6 @@ class MainActivity : AppCompatActivity() {
             RootManager.initialize(this)
         }
 
-        updateStatus()
         Toast.makeText(this, "JARVIS activated", Toast.LENGTH_SHORT).show()
     }
 
@@ -129,7 +174,6 @@ class MainActivity : AppCompatActivity() {
         stopWakeWordService()
         FloatingHUD.hide(this)
 
-        updateStatus()
         Toast.makeText(this, "JARVIS deactivated", Toast.LENGTH_SHORT).show()
     }
 
@@ -141,8 +185,10 @@ class MainActivity : AppCompatActivity() {
             } else {
                 startService(serviceIntent)
             }
+            Log.d(TAG, "JarvisService started")
         } catch (e: Exception) {
-            Toast.makeText(this, "Failed to start service: ${e.message}", Toast.LENGTH_SHORT).show()
+            Log.e(TAG, "Failed to start service: ${e.message}")
+            Toast.makeText(this, "Failed to start service", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -150,8 +196,9 @@ class MainActivity : AppCompatActivity() {
         try {
             val serviceIntent = Intent(this, JarvisService::class.java)
             stopService(serviceIntent)
+            Log.d(TAG, "JarvisService stopped")
         } catch (e: Exception) {
-            Toast.makeText(this, "Failed to stop service: ${e.message}", Toast.LENGTH_SHORT).show()
+            Log.e(TAG, "Failed to stop service: ${e.message}")
         }
     }
 
@@ -163,8 +210,10 @@ class MainActivity : AppCompatActivity() {
             } else {
                 startService(serviceIntent)
             }
+            Log.d(TAG, "WakeWordService started")
         } catch (e: Exception) {
-            Toast.makeText(this, "Failed to start wake word service: ${e.message}", Toast.LENGTH_SHORT).show()
+            Log.e(TAG, "Failed to start wake word service: ${e.message}")
+            Toast.makeText(this, "Failed to start wake word service", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -172,97 +221,169 @@ class MainActivity : AppCompatActivity() {
         try {
             val serviceIntent = Intent(this, JarvisWakeWordService::class.java)
             stopService(serviceIntent)
+            Log.d(TAG, "WakeWordService stopped")
         } catch (e: Exception) {
-            Toast.makeText(this, "Failed to stop wake word service: ${e.message}", Toast.LENGTH_SHORT).show()
+            Log.e(TAG, "Failed to stop wake word service: ${e.message}")
         }
     }
 
     private fun testJarvis() {
-        // Test command
-        val testCommand = "open settings and show battery"
+        if (!checkAllRequirements()) {
+            Toast.makeText(this, "Please grant all permissions first", Toast.LENGTH_SHORT).show()
+            return
+        }
 
-        // Use coroutine scope
+        val testCommand = "open settings"
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
             val actions = GeminiPlanner.planActions(testCommand)
             if (actions.isNotEmpty()) {
-                ActionExecutor.execute(actions)
+                ActionExecutor.execute(actions, this@MainActivity)
                 runOnUiThread {
                     Toast.makeText(this@MainActivity,
                         "Test command executed", Toast.LENGTH_SHORT).show()
+                }
+            } else {
+                runOnUiThread {
+                    Toast.makeText(this@MainActivity,
+                        "No actions generated", Toast.LENGTH_SHORT).show()
                 }
             }
         }
     }
 
-    private fun checkPermissions(): Boolean {
-        val missingPermissions = getMissingPermissions()
+    private fun testAccessibility() {
+        if (isAccessibilityEnabled()) {
+            Toast.makeText(this, "Accessibility is enabled ✓", Toast.LENGTH_SHORT).show()
 
-        if (missingPermissions.isNotEmpty()) {
-            textStatus.text = "Missing ${missingPermissions.size} permissions"
-            return false
+            if (JarvisAccessibilityService.instance != null) {
+                Toast.makeText(this, "Service instance is active", Toast.LENGTH_SHORT).show()
+
+                // Test a simple action
+                val success = JarvisAccessibilityService.clickByText("START")
+                Toast.makeText(this, "Click test: ${if (success) "Success" else "Failed"}", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(this, "Service instance is null (restart app)", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            Toast.makeText(this, "Accessibility is disabled ✗", Toast.LENGTH_SHORT).show()
+            showAccessibilityDialog()
         }
-
-        if (!hasOverlayPermission()) {
-            textStatus.text = "Need overlay permission"
-            return false
-        }
-
-        if (!isAccessibilityEnabled()) {
-            textStatus.text = "Enable accessibility service"
-            return false
-        }
-
-        textStatus.text = "Ready"
-        return true
     }
 
-    private fun requestPermissions() {
-        val permissions = getMissingPermissions().toTypedArray()
+    private fun checkAllRequirements(): Boolean {
+        return hasRecordAudioPermission() &&
+                hasVibrationPermission() &&
+                hasOverlayPermission() &&
+                isAccessibilityEnabled()
+    }
 
+    private fun showMissingRequirementsDialog() {
+        val missing = StringBuilder()
+
+        if (!hasRecordAudioPermission()) missing.append("• Microphone permission\n")
+        if (!hasVibrationPermission()) missing.append("• Vibration permission\n")
+        if (!hasOverlayPermission()) missing.append("• Display over other apps\n")
+        if (!isAccessibilityEnabled()) missing.append("• Accessibility service\n")
+
+        AlertDialog.Builder(this)
+            .setTitle("Required Permissions")
+            .setMessage("Please grant these permissions:\n\n$missing")
+            .setPositiveButton("Grant All") { _, _ ->
+                requestAllMissingPermissions()
+            }
+            .setNegativeButton("Later", null)
+            .show()
+    }
+
+    private fun requestAllMissingPermissions() {
+        val permissions = mutableListOf<String>()
+
+        // Audio permission
+        if (!hasRecordAudioPermission()) {
+            permissions.add(Manifest.permission.RECORD_AUDIO)
+        }
+
+        // Vibration permission (Android 13+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (!hasVibrationPermission()) {
+                permissions.add(Manifest.permission.VIBRATE)
+            }
+        }
+
+        // Notification permission (Android 13+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (!hasNotificationPermission()) {
+                permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+
+        // Request runtime permissions
         if (permissions.isNotEmpty()) {
             ActivityCompat.requestPermissions(
                 this,
-                permissions,
+                permissions.toTypedArray(),
                 PERMISSION_REQUEST_CODE
             )
         }
 
+        // Overlay permission (special intent)
         if (!hasOverlayPermission()) {
-            val intent = Intent(
-                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:$packageName")
-            )
-            startActivityForResult(intent, OVERLAY_PERMISSION_REQUEST)
+            requestOverlayPermission()
+        }
+
+        // Accessibility (needs manual enabling)
+        if (!isAccessibilityEnabled()) {
+            showAccessibilityDialog()
         }
     }
 
-    private fun getMissingPermissions(): List<String> {
-        val requiredPermissions = mutableListOf<String>()
-
-        if (!hasRecordAudioPermission()) {
-            requiredPermissions.add(Manifest.permission.RECORD_AUDIO)
-        }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (!hasNotificationPermission()) {
-                requiredPermissions.add(Manifest.permission.POST_NOTIFICATIONS)
+    private fun showAccessibilityDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("Enable Accessibility Service")
+            .setMessage("JARVIS needs accessibility permission to:\n" +
+                    "• Click buttons automatically\n" +
+                    "• Type text for you\n" +
+                    "• Navigate between apps\n" +
+                    "• Read screen content\n\n" +
+                    "Please go to Accessibility settings and enable 'JARVIS Accessibility Service'")
+            .setPositiveButton("Open Settings") { _, _ ->
+                openAccessibilitySettings()
             }
-        }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
 
-        return requiredPermissions
+    private fun openAccessibilitySettings() {
+        try {
+            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            startActivityForResult(intent, ACCESSIBILITY_SETTINGS)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to open accessibility settings: ${e.message}")
+            Toast.makeText(this, "Cannot open settings", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun hasRecordAudioPermission(): Boolean {
         return ActivityCompat.checkSelfPermission(
             this, Manifest.permission.RECORD_AUDIO
-        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun hasVibrationPermission(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ActivityCompat.checkSelfPermission(
+                this, Manifest.permission.VIBRATE
+            ) == PackageManager.PERMISSION_GRANTED
+        } else {
+            true // Vibration permission not required before Android 13
+        }
     }
 
     private fun hasNotificationPermission(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             ActivityCompat.checkSelfPermission(
                 this, Manifest.permission.POST_NOTIFICATIONS
-            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            ) == PackageManager.PERMISSION_GRANTED
         } else {
             true
         }
@@ -276,46 +397,95 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun hasAllPermissions(): Boolean {
-        return hasRecordAudioPermission() &&
-                hasOverlayPermission() &&
-                isAccessibilityEnabled()
+    private fun requestOverlayPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (!Settings.canDrawOverlays(this)) {
+                val intent = Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:$packageName")
+                )
+                startActivityForResult(intent, OVERLAY_PERMISSION_REQUEST)
+            }
+        }
     }
 
     private fun isAccessibilityEnabled(): Boolean {
-        // Check if our accessibility service is enabled
-        val serviceName = "$packageName/.JarvisAccessibilityService"
-        val accessibilityEnabled = Settings.Secure.getString(
-            contentResolver,
-            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-        )
+        return try {
+            // Method 1: Check via AccessibilityManager (most reliable)
+            val accessibilityManager = getSystemService(ACCESSIBILITY_SERVICE) as android.view.accessibility.AccessibilityManager
 
-        return accessibilityEnabled?.contains(serviceName) == true
-    }
+            // Get list of enabled services
+            val enabledServices = Settings.Secure.getString(
+                contentResolver,
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+            )
 
-    private fun openAccessibilitySettings() {
-        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-        startActivityForResult(intent, ACCESSIBILITY_SETTINGS)
+            val serviceName = "$packageName/.JarvisAccessibilityService"
+            val serviceNameWithNoLeadingDot = "$packageName/${JarvisAccessibilityService::class.java.simpleName}"
+
+            Log.d(TAG, "Checking accessibility service: $serviceName")
+            Log.d(TAG, "Enabled services: $enabledServices")
+
+            // Check multiple possible service name formats
+            val isEnabled = enabledServices?.let {
+                it.contains(serviceName, ignoreCase = true) ||
+                        it.contains(serviceNameWithNoLeadingDot, ignoreCase = true) ||
+                        it.contains("JarvisAccessibilityService", ignoreCase = true)
+            } ?: false
+
+            // Also check if the service is running
+            val isRunning = JarvisAccessibilityService.instance != null
+
+            Log.d(TAG, "Accessibility enabled: $isEnabled, Running: $isRunning")
+
+            return isEnabled || isRunning
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking accessibility: ${e.message}")
+            false
+        }
     }
 
     private fun updateStatus() {
         val status = StringBuilder()
 
-        status.append("Permissions: ")
-        status.append(if (hasRecordAudioPermission()) "✓" else "✗")
-        status.append(" ")
-
-        status.append("Overlay: ")
-        status.append(if (hasOverlayPermission()) "✓" else "✗")
-        status.append(" ")
-
-        status.append("Accessibility: ")
-        status.append(if (isAccessibilityEnabled()) "✓" else "✗")
+        // Permissions
+        status.append("1. Microphone: ")
+        status.append(if (hasRecordAudioPermission()) "✓ GRANTED" else "✗ MISSING")
         status.append("\n")
 
-        status.append("Wake Word: ${if (switchWakeWord.isChecked) "ON" else "OFF"}\n")
-        status.append("Vision: ${if (switchVision.isChecked) "ON" else "OFF"}\n")
-        status.append("Root: ${if (switchRoot.isChecked && RootManager.hasRootAccess()) "ON" else "OFF"}")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            status.append("2. Vibration: ")
+            status.append(if (hasVibrationPermission()) "✓ GRANTED" else "✗ MISSING")
+            status.append("\n")
+
+            status.append("3. Notifications: ")
+            status.append(if (hasNotificationPermission()) "✓ GRANTED" else "✗ MISSING")
+            status.append("\n")
+        }
+
+        status.append("4. Overlay: ")
+        status.append(if (hasOverlayPermission()) "✓ GRANTED" else "✗ MISSING")
+        status.append("\n")
+
+        status.append("5. Accessibility: ")
+        if (isAccessibilityEnabled()) {
+            status.append("✓ ENABLED")
+            if (JarvisAccessibilityService.instance != null) {
+                status.append(" (RUNNING)")
+            }
+        } else {
+            status.append("✗ DISABLED")
+            status.append("\n")
+            status.append("   → Go to Settings > Accessibility > Installed Services")
+            status.append("\n")
+            status.append("   → Enable 'JARVIS Accessibility Service'")
+        }
+        status.append("\n\n")
+
+        status.append("Features:\n")
+        status.append("• Wake Word: ${if (switchWakeWord.isChecked) "ON" else "OFF"}\n")
+        status.append("• Vision: ${if (switchVision.isChecked) "ON" else "OFF"}\n")
+        status.append("• Root: ${if (switchRoot.isChecked && RootManager.hasRootAccess()) "ON" else "OFF"}")
 
         textStatus.text = status.toString()
         updateMemoryStats()
@@ -339,16 +509,31 @@ class MainActivity : AppCompatActivity() {
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == PERMISSION_REQUEST_CODE) {
-            updateStatus()
+        when (requestCode) {
+            PERMISSION_REQUEST_CODE -> {
+                updateStatus()
+                // Check if we can start JARVIS now
+                if (checkAllRequirements()) {
+                    Toast.makeText(this, "All permissions granted!", Toast.LENGTH_SHORT).show()
+                }
+            }
         }
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         when (requestCode) {
-            OVERLAY_PERMISSION_REQUEST, ACCESSIBILITY_SETTINGS -> {
+            OVERLAY_PERMISSION_REQUEST -> {
                 updateStatus()
+                if (hasOverlayPermission()) {
+                    Toast.makeText(this, "Overlay permission granted", Toast.LENGTH_SHORT).show()
+                }
+            }
+            ACCESSIBILITY_SETTINGS -> {
+                updateStatus()
+                if (isAccessibilityEnabled()) {
+                    Toast.makeText(this, "Accessibility enabled!", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
@@ -356,5 +541,12 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         updateStatus()
+        // Start checking accessibility status periodically
+        handler.post(accessibilityCheckRunnable)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        handler.removeCallbacks(accessibilityCheckRunnable)
     }
 }

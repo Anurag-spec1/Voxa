@@ -29,7 +29,7 @@ object TaskScheduler {
             .enqueueUniqueWork(
                 task.id,
                 ExistingWorkPolicy.REPLACE,
-                workRequest
+                workRequest as OneTimeWorkRequest
             )
 
         Log.d(TAG, "Scheduled task: ${task.command} in ${task.delayMillis}ms")
@@ -107,9 +107,9 @@ object TaskScheduler {
     }
 }
 
-class JarvisWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
+class JarvisWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
-    override fun doWork(): Result {
+    override suspend fun doWork(): Result {
         return try {
             val taskJson = inputData.getString("task_json")
             val task = Gson().fromJson(taskJson, TaskScheduler.ScheduledTask::class.java)
@@ -117,14 +117,14 @@ class JarvisWorker(context: Context, params: WorkerParameters) : Worker(context,
             Log.d("JarvisWorker", "Executing scheduled task: ${task.command}")
 
             // Execute the command
-            CoroutineScope(Dispatchers.IO).launch {
-                val actions = GeminiPlanner.planActions(task.command)
-                if (actions.isNotEmpty()) {
-                    ActionExecutor.execute(actions)
-                }
+            val actions = GeminiPlanner.planActions(task.command)
+            if (actions.isNotEmpty()) {
+                ActionExecutor.execute(actions)
+                Result.success()
+            } else {
+                Log.e("JarvisWorker", "No actions generated for task")
+                Result.failure()
             }
-
-            Result.success()
         } catch (e: Exception) {
             Log.e("JarvisWorker", "Task execution failed: ${e.message}")
             Result.failure()

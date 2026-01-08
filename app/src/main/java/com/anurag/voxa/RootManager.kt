@@ -2,7 +2,6 @@ package com.anurag.voxa
 
 import android.content.Context
 import android.util.Log
-import androidx.test.shell.Shell
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -14,9 +13,10 @@ object RootManager {
     private var isInitialized = false
     private val scope = CoroutineScope(Dispatchers.IO)
 
+    // Using Runtime.exec() as fallback since we don't have libsu dependency
     fun initialize(context: Context) {
         scope.launch {
-            isRooted = Shell.getShell().isRoot
+            isRooted = checkRootAccess()
             isInitialized = true
 
             if (isRooted) {
@@ -28,27 +28,48 @@ object RootManager {
         }
     }
 
+    private fun checkRootAccess(): Boolean {
+        return try {
+            // Try to execute a simple root command
+            val process = Runtime.getRuntime().exec("su -c id")
+            val output = process.inputStream.bufferedReader().readText()
+            process.waitFor()
+            output.contains("uid=0")
+        } catch (e: Exception) {
+            Log.e(TAG, "Root check failed: ${e.message}")
+            false
+        }
+    }
+
     private fun setupRootEnvironment() {
         // Execute some setup commands
-        Shell.cmd(
-            "settings put global airplane_mode_on 0",
-            "am broadcast -a android.intent.action.AIRPLANE_MODE --ez state false"
-        ).exec()
+        executeCommand("settings put global airplane_mode_on 0")
+        executeCommand("am broadcast -a android.intent.action.AIRPLANE_MODE --ez state false")
     }
 
     fun executeCommand(command: String): String {
         if (!isRooted) return "No root access"
 
         return try {
-            val result = Shell.cmd(command).exec()
-            if (result.isSuccess) {
-                result.out.joinToString("\n")
+            val process = Runtime.getRuntime().exec(arrayOf("su", "-c", command))
+            val output = process.inputStream.bufferedReader().readText()
+            val error = process.errorStream.bufferedReader().readText()
+            process.waitFor()
+
+            if (process.exitValue() == 0) {
+                output
             } else {
-                result.err.joinToString("\n")
+                "Error: $error"
             }
         } catch (e: Exception) {
-            "Error: ${e.message}"
+            "Exception: ${e.message}"
         }
+    }
+
+    fun executeCommands(vararg commands: String): List<String> {
+        if (!isRooted) return listOf("No root access")
+
+        return commands.map { executeCommand(it) }
     }
 
     // System Controls
@@ -103,7 +124,7 @@ object RootManager {
         scope.launch {
             if (!isRooted) return@launch
 
-            executeCommand("pm install -r $apkPath")
+            executeCommand("pm install -r \"$apkPath\"")
         }
     }
 
@@ -119,7 +140,7 @@ object RootManager {
         scope.launch {
             if (!isRooted) return@launch
 
-            executeCommand("screencap -p $path")
+            executeCommand("screencap -p \"$path\"")
         }
     }
 
@@ -179,7 +200,7 @@ object RootManager {
         scope.launch {
             if (!isRooted) return@launch
 
-            executeCommand("pm backup $packageName -f $backupPath")
+            executeCommand("pm backup $packageName -f \"$backupPath\"")
         }
     }
 
@@ -187,7 +208,7 @@ object RootManager {
         scope.launch {
             if (!isRooted) return@launch
 
-            executeCommand("pm restore $backupPath")
+            executeCommand("pm restore \"$backupPath\"")
         }
     }
 
