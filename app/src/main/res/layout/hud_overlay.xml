@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:background="@drawable/hud_background"
+    android:padding="12dp"
+    android:gravity="center_vertical">
+
+    <View
+        android:id="@+id/status_indicator"
+        android:layout_width="8dp"
+        android:layout_height="8dp"
+        android:layout_marginEnd="8dp"
+        android:background="#FF0000" />
+
+    <TextView
+        android:id="@+id/hud_text"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="JARVIS"
+        android:textColor="#FFFFFF"
+        android:textSize="14sp"
+        android:textStyle="bold" />
+
+</LinearLayout>
