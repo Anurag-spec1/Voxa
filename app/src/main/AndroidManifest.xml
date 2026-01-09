@@ -11,6 +11,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" />
+    <!-- Add this permission for the overlay -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <!-- Android 14+ foreground service permissions -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"
