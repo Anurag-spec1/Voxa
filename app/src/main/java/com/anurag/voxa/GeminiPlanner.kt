@@ -12,17 +12,19 @@ import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 object GeminiPlanner {
-
     private const val TAG = "GeminiPlanner"
 
-    // FIX THIS: Your API key might be invalid or have issues
+    // Your API key
     private const val GEMINI_API_KEY = "AIzaSyAUa62eX7r7h8A8V89pz76ydUvaPTbdGUA"
 
-    // Updated URL for Gemini 1.5 Pro
-    private const val GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent"
+    // CORRECTED API URLs
+    private const val GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/"
 
-    // Or try Gemini 1.0 Pro (more stable)
-    private const val GEMINI_URL_1_0 = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent"
+    // Available models - try gemini-pro first (most stable)
+    private const val GEMINI_PRO = "gemini-pro:generateContent"
+
+    // Build URL
+    private val geminiProUrl = "${GEMINI_BASE_URL}${GEMINI_PRO}?key=$GEMINI_API_KEY"
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -61,10 +63,6 @@ object GeminiPlanner {
         val content: Content?
     )
 
-    data class ActionPlan(
-        val actions: List<Action>
-    )
-
     data class Action(
         val type: String,
         val target: String = "",
@@ -79,235 +77,259 @@ object GeminiPlanner {
         try {
             Log.d(TAG, "Planning actions for command: '$command'")
 
-            // First try to handle simple commands locally (FASTER, NO API CALL)
+            // Always try local command first (no API call needed)
             val localActions = handleLocalCommand(command)
             if (localActions.isNotEmpty()) {
-                Log.d(TAG, "Using local actions: ${localActions.size}")
+                Log.d(TAG, "✓ Using local actions: ${localActions.size}")
                 return@withContext localActions
             }
 
-            // For complex commands, use Gemini
-            val systemPrompt = """
-                You are Jarvis - an Android automation AI assistant.
-                Convert user commands into executable UI actions in JSON format.
-                
-                Available Actions (output as JSON array):
-                1. {"type": "open_app", "packageName": "com.app.package"}
-                2. {"type": "click", "target": "Button text"} 
-                3. {"type": "type", "text": "text to type"}
-                4. {"type": "send"} (press Enter key)
-                5. {"type": "back"} (go back)
-                6. {"type": "home"} (go to home screen)
-                7. {"type": "recents"} (show recent apps)
-                8. {"type": "scroll", "direction": "up/down"}
-                9. {"type": "wait", "delay": 1000} (milliseconds)
-                
-                IMPORTANT: Output ONLY valid JSON array. No explanations, no markdown.
-                
-                Example 1:
-                User: "open whatsapp"
-                Output: [{"type": "open_app", "packageName": "com.whatsapp"}]
-                
-                Example 2:
-                User: "open youtube and search for music"
-                Output: [
-                  {"type": "open_app", "packageName": "com.google.android.youtube"},
-                  {"type": "wait", "delay": 2000},
-                  {"type": "click", "target": "Search"},
-                  {"type": "wait", "delay": 1000},
-                  {"type": "type", "text": "music"},
-                  {"type": "send"}
-                ]
-                
-                User Command: "$command"
-            """.trimIndent()
+            Log.d(TAG, "No local action found, trying Gemini API...")
 
-            val requestBody = """
-                {
-                  "contents": [{
-                    "parts": [{
-                      "text": "$systemPrompt"
-                    }]
-                  }],
-                  "generationConfig": {
-                    "temperature": 0.1,
-                    "topK": 1,
-                    "topP": 1,
-                    "maxOutputTokens": 500
-                  }
-                }
-            """.trimIndent()
-
-            Log.d(TAG, "Sending request to Gemini API...")
-
-            // Try multiple endpoints if one fails
-            val urlsToTry = listOf(
-                "$GEMINI_URL_1_0?key=$GEMINI_API_KEY",
-                "$GEMINI_URL?key=$GEMINI_API_KEY"
-            )
-
-            var responseBody: String? = null
-            var lastException: Exception? = null
-
-            for (url in urlsToTry) {
-                try {
-                    Log.d(TAG, "Trying URL: ${url.substring(0, minOf(50, url.length))}...")
-
-                    val request = Request.Builder()
-                        .url(url)
-                        .post(requestBody.toRequestBody(jsonMediaType))
-                        .addHeader("Content-Type", "application/json")
-                        .build()
-
-                    val response = client.newCall(request).execute()
-
-                    Log.d(TAG, "Response code: ${response.code}")
-
-                    if (response.isSuccessful) {
-                        responseBody = response.body?.string()
-                        Log.d(TAG, "Response body (first 500 chars): ${responseBody?.take(500)}")
-                        break
-                    } else {
-                        Log.e(TAG, "API call failed with code: ${response.code}")
-                        Log.e(TAG, "Response error: ${response.body?.string()}")
-                        lastException = Exception("API error ${response.code}")
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error with URL $url: ${e.message}")
-                    lastException = e
-                }
-            }
-
-            if (responseBody == null) {
-                Log.e(TAG, "All API attempts failed")
-                throw lastException ?: Exception("No response from API")
-            }
-
-            // Parse response
-            return@withContext parseGeminiResponse(responseBody, command)
+            // Use the most reliable model
+            return@withContext tryGeminiApi(command)
 
         } catch (e: Exception) {
             Log.e(TAG, "Error in planActions: ${e.message}")
-            e.printStackTrace()
 
-            // Fallback to local handling if API fails
+            // Final fallback - ADD THIS FUNCTION
             return@withContext handleLocalCommandFallback(command)
         }
     }
 
-    private fun handleLocalCommand(command: String): List<Action> {
-        val lowerCommand = command.lowercase()
+    private suspend fun tryGeminiApi(command: String): List<Action> = withContext(Dispatchers.IO) {
+        // Create a better prompt
+        val systemPrompt = """
+            You are Jarvis, an Android automation assistant. Convert voice commands into JSON actions.
+            
+            AVAILABLE ACTIONS (output ONLY JSON array):
+            
+            1. OPEN APP: {"type": "open_app", "packageName": "com.package.name", "delay": 2000}
+            2. CLICK: {"type": "click", "target": "Button Text", "delay": 1000}
+            3. TYPE: {"type": "type", "text": "text to type", "delay": 1000}
+            4. SEND: {"type": "send", "delay": 500} (press Enter)
+            5. BACK: {"type": "back", "delay": 500}
+            6. HOME: {"type": "home", "delay": 500}
+            7. RECENTS: {"type": "recents", "delay": 500}
+            
+            COMMON PACKAGE NAMES:
+            - WhatsApp: com.whatsapp
+            - YouTube: com.google.android.youtube  
+            - Settings: com.android.settings
+            - Camera: com.android.camera
+            - Chrome: com.android.chrome
+            - Gmail: com.google.android.gm
+            - Maps: com.google.android.apps.maps
+            - Instagram: com.instagram.android
+            - Phone: com.android.dialer
+            - Messages: com.google.android.apps.messaging
+            
+            EXAMPLES:
+            User: "open youtube"
+            Output: [{"type": "open_app", "packageName": "com.google.android.youtube", "delay": 2000}]
+            
+            User: "open settings and go back"
+            Output: [
+              {"type": "open_app", "packageName": "com.android.settings", "delay": 2000},
+              {"type": "wait", "delay": 1000},
+              {"type": "back", "delay": 500}
+            ]
+            
+            IMPORTANT: Output ONLY the JSON array. No explanations. If unsure, return empty array [].
+            
+            User Command: "${command.trim()}"
+        """.trimIndent()
 
-        return when {
-            // Open app commands
-            lowerCommand.contains("open") && !lowerCommand.contains("open") -> {
-                val appName = extractAppNameFromCommand(command)
-                if (appName.isNotEmpty()) {
-                    val packageName = getPackageNameForApp(appName)
-                    if (packageName.isNotEmpty()) {
-                        listOf(Action(type = "open_app", packageName = packageName))
-                    } else {
-                        emptyList()
-                    }
+        try {
+            Log.d(TAG, "Trying model: gemini-pro")
+
+            val request = createGeminiRequest(systemPrompt, geminiProUrl)
+            val response = client.newCall(request).execute()
+
+            Log.d(TAG, "Response code: ${response.code}")
+
+            if (response.isSuccessful) {
+                val responseBody = response.body?.string()
+                Log.d(TAG, "✓ Success from gemini-pro")
+
+                val actions = parseGeminiResponse(responseBody ?: "", command)
+                if (actions.isNotEmpty()) {
+                    Log.d(TAG, "✓ Parsed ${actions.size} actions")
+                    return@withContext actions
                 } else {
-                    emptyList()
+                    Log.w(TAG, "No actions parsed, using fallback")
+                    return@withContext handleLocalCommandFallback(command)
                 }
+            } else {
+                val error = response.body?.string()
+                Log.e(TAG, "✗ gemini-pro failed: ${response.code} - $error")
+                return@withContext handleLocalCommandFallback(command)
             }
-
-            // Simple system commands
-            lowerCommand.contains("go home") || lowerCommand.contains("home") -> {
-                listOf(Action(type = "home"))
-            }
-
-            lowerCommand.contains("go back") || lowerCommand.contains("back") -> {
-                listOf(Action(type = "back"))
-            }
-
-            lowerCommand.contains("recent") || lowerCommand.contains("recents") -> {
-                listOf(Action(type = "recents"))
-            }
-
-            else -> emptyList()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error with gemini-pro: ${e.message}")
+            return@withContext handleLocalCommandFallback(command)
         }
     }
 
-    private fun handleLocalCommandFallback(command: String): List<Action> {
-        Log.d(TAG, "Using fallback for command: $command")
-
-        val lowerCommand = command.lowercase()
-
-        return when {
-            // Try to extract and open app
-            lowerCommand.contains("open") -> {
-                val appName = extractAppNameFromCommand(command)
-                if (appName.isNotEmpty()) {
-                    val packageName = getPackageNameForApp(appName)
-                    if (packageName.isNotEmpty()) {
-                        listOf(Action(type = "open_app", packageName = packageName))
-                    } else {
-                        // Try common apps
-                        when {
-                            lowerCommand.contains("whatsapp") -> listOf(Action(type = "open_app", packageName = "com.whatsapp"))
-                            lowerCommand.contains("youtube") -> listOf(Action(type = "open_app", packageName = "com.google.android.youtube"))
-                            lowerCommand.contains("instagram") -> listOf(Action(type = "open_app", packageName = "com.instagram.android"))
-                            lowerCommand.contains("settings") -> listOf(Action(type = "open_app", packageName = "com.android.settings"))
-                            lowerCommand.contains("camera") -> listOf(Action(type = "open_app", packageName = "com.android.camera"))
-                            else -> emptyList()
-                        }
-                    }
-                } else {
-                    emptyList()
-                }
-            }
-
-            else -> emptyList()
-        }
-    }
-
-    private fun extractAppNameFromCommand(command: String): String {
-        val patterns = listOf(
-            "open (\\w+)" to Regex("open (\\w+)", RegexOption.IGNORE_CASE),
-            "open the (\\w+)" to Regex("open the (\\w+)", RegexOption.IGNORE_CASE),
-            "launch (\\w+)" to Regex("launch (\\w+)", RegexOption.IGNORE_CASE),
-            "start (\\w+)" to Regex("start (\\w+)", RegexOption.IGNORE_CASE)
+    private fun createGeminiRequest(prompt: String, url: String): Request {
+        val requestBody = gson.toJson(
+            GeminiRequest(
+                contents = listOf(
+                    Content(
+                        parts = listOf(
+                            Part(text = prompt)
+                        )
+                    )
+                ),
+                generationConfig = GenerationConfig(
+                    temperature = 0.1,
+                    topK = 1,
+                    topP = 1.0,
+                    maxOutputTokens = 500
+                )
+            )
         )
 
-        for ((_, regex) in patterns) {
-            val match = regex.find(command)
+        return Request.Builder()
+            .url(url)
+            .post(requestBody.toRequestBody(jsonMediaType))
+            .addHeader("Content-Type", "application/json")
+            .build()
+    }
+
+    // MAIN local command handler
+    private fun handleLocalCommand(command: String): List<Action> {
+        val lowerCommand = command.lowercase().trim()
+        Log.d(TAG, "Local handler processing: '$lowerCommand'")
+
+        // Handle empty or just "open"
+        if (lowerCommand.isEmpty() || lowerCommand == "open") {
+            Log.w(TAG, "Empty or incomplete command")
+            // Return a default action - open settings
+            return listOf(Action(type = "open_app", packageName = "com.android.settings", delay = 2000))
+        }
+
+        // Extract app name using regex patterns
+        val patterns = listOf(
+            Regex("""open\s+(\w+)""", RegexOption.IGNORE_CASE),
+            Regex("""launch\s+(\w+)""", RegexOption.IGNORE_CASE),
+            Regex("""start\s+(\w+)""", RegexOption.IGNORE_CASE)
+        )
+
+        var appName = ""
+        for (pattern in patterns) {
+            val match = pattern.find(lowerCommand)
             if (match != null) {
-                return match.groupValues[1]
+                appName = match.groupValues[1]
+                Log.d(TAG, "Found app name via regex: $appName")
+                break
             }
         }
 
-        // Fallback: extract word after "open"
-        val openIndex = command.indexOf("open", ignoreCase = true)
-        if (openIndex != -1) {
-            val afterOpen = command.substring(openIndex + 4).trim()
-            return afterOpen.split(" ").firstOrNull() ?: ""
+        // If no regex match, try simple extraction
+        if (appName.isEmpty() && lowerCommand.startsWith("open ")) {
+            appName = lowerCommand.substring(5).split(" ")[0]
+            Log.d(TAG, "Extracted app name: $appName")
         }
 
-        return ""
+        if (appName.isNotEmpty()) {
+            val packageName = getPackageNameForApp(appName)
+            if (packageName.isNotEmpty()) {
+                Log.d(TAG, "✓ Local handler opening: $appName -> $packageName")
+                return listOf(Action(type = "open_app", packageName = packageName, delay = 2000))
+            }
+        }
+
+        // Handle common commands
+        return when {
+            lowerCommand.contains("go home") || lowerCommand == "home" ->
+                listOf(Action(type = "home", delay = 1000))
+
+            lowerCommand.contains("go back") || lowerCommand == "back" ->
+                listOf(Action(type = "back", delay = 1000))
+
+            lowerCommand.contains("recent") ->
+                listOf(Action(type = "recents", delay = 1000))
+
+            // Direct app names (without "open")
+            lowerCommand == "settings" ->
+                listOf(Action(type = "open_app", packageName = "com.android.settings", delay = 2000))
+
+            lowerCommand == "whatsapp" ->
+                listOf(Action(type = "open_app", packageName = "com.whatsapp", delay = 2000))
+
+            lowerCommand == "youtube" ->
+                listOf(Action(type = "open_app", packageName = "com.google.android.youtube", delay = 2000))
+
+            else -> emptyList()
+        }
+    }
+
+    // ADD THIS FUNCTION - Fallback handler when local command returns empty
+    private fun handleLocalCommandFallback(command: String): List<Action> {
+        Log.d(TAG, "Fallback handler for: '$command'")
+
+        val lowerCommand = command.lowercase().trim()
+
+        // Try to extract any recognizable word
+        val words = lowerCommand.split(" ")
+
+        // Check each word for known apps
+        for (word in words) {
+            val packageName = getPackageNameForApp(word)
+            if (packageName.isNotEmpty()) {
+                Log.d(TAG, "Fallback found: $word -> $packageName")
+                return listOf(Action(type = "open_app", packageName = packageName, delay = 2000))
+            }
+        }
+
+        // Common fallback patterns
+        return when {
+            lowerCommand.contains("open") -> {
+                // If command contains "open" but we couldn't parse app, open settings
+                Log.d(TAG, "Command contains 'open', defaulting to settings")
+                listOf(Action(type = "open_app", packageName = "com.android.settings", delay = 2000))
+            }
+
+            lowerCommand.contains("app") || lowerCommand.contains("application") -> {
+                // Generic app command, open settings
+                listOf(Action(type = "open_app", packageName = "com.android.settings", delay = 2000))
+            }
+
+            // If we can't understand at all, do nothing
+            else -> {
+                Log.w(TAG, "No fallback action found for: $command")
+                emptyList()
+            }
+        }
     }
 
     private fun getPackageNameForApp(appName: String): String {
         return when (appName.lowercase()) {
-            "whatsapp", "whats app", "whats" -> "com.whatsapp"
-            "youtube", "yt", "you tube" -> "com.google.android.youtube"
-            "instagram", "insta", "ig" -> "com.instagram.android"
-            "settings", "setting" -> "com.android.settings"
-            "camera" -> "com.android.camera"
-            "gallery", "photos" -> "com.android.gallery3d"
-            "messages", "sms" -> "com.android.mms"
-            "phone", "dialer" -> "com.android.dialer"
-            "contacts" -> "com.android.contacts"
+            // Social
+            "whatsapp", "whats", "whatsapp" -> "com.whatsapp"
+            "youtube", "yt" -> "com.google.android.youtube"
+            "instagram", "insta" -> "com.instagram.android"
+            "facebook", "fb" -> "com.facebook.katana"
+
+            // Google
+            "gmail", "mail", "email" -> "com.google.android.gm"
             "chrome", "browser" -> "com.android.chrome"
-            "gmail", "email" -> "com.google.android.gm"
-            "maps" -> "com.google.android.apps.maps"
-            "play store", "playstore" -> "com.android.vending"
-            "calculator" -> "com.android.calculator2"
+            "maps", "google maps" -> "com.google.android.apps.maps"
+            "photos", "gallery" -> "com.google.android.apps.photos"
+
+            // System
+            "settings", "setting" -> "com.android.settings"
+            "camera" -> "com.android.camera2"
+            "phone", "dialer", "dial" -> "com.android.dialer"
+            "messages", "sms", "text" -> "com.google.android.apps.messaging"
+            "contacts" -> "com.android.contacts"
             "clock" -> "com.android.deskclock"
+            "calculator" -> "com.android.calculator2"
             "calendar" -> "com.google.android.calendar"
             "files", "file manager" -> "com.android.documentsui"
+
+            // Default
             else -> ""
         }
     }
@@ -316,55 +338,99 @@ object GeminiPlanner {
         try {
             Log.d(TAG, "Parsing Gemini response...")
 
-            val jsonResponse = JSONObject(responseBody)
-            val candidates = jsonResponse.optJSONArray("candidates")
+            // Clean response - remove markdown
+            var cleaned = responseBody
+                .replace("```json", "")
+                .replace("```", "")
+                .trim()
 
-            if (candidates == null || candidates.length() == 0) {
-                Log.e(TAG, "No candidates in response")
-                return handleLocalCommandFallback(originalCommand)
-            }
-
-            val candidate = candidates.optJSONObject(0)
-            val content = candidate?.optJSONObject("content")
-            val parts = content?.optJSONArray("parts")
-            val part = parts?.optJSONObject(0)
-            val text = part?.optString("text") ?: ""
-
-            Log.d(TAG, "Gemini response text: ${text.take(200)}...")
-
-            // Try to extract JSON from the response
-            val jsonStart = text.indexOf('[')
-            val jsonEnd = text.lastIndexOf(']') + 1
+            // Find JSON array
+            val jsonStart = cleaned.indexOf('[')
+            val jsonEnd = cleaned.lastIndexOf(']')
 
             if (jsonStart >= 0 && jsonEnd > jsonStart) {
-                val jsonString = text.substring(jsonStart, jsonEnd)
+                val jsonString = cleaned.substring(jsonStart, jsonEnd + 1)
                 Log.d(TAG, "Extracted JSON: $jsonString")
 
                 try {
-                    val actionPlan = gson.fromJson(jsonString, Array<Action>::class.java)
-                    return actionPlan.toList()
+                    val actions = gson.fromJson(jsonString, Array<Action>::class.java)
+                    Log.d(TAG, "✓ Successfully parsed ${actions.size} actions")
+                    return actions.toList()
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error parsing JSON array: ${e.message}")
+                    Log.e(TAG, "JSON parsing error: ${e.message}")
+                    // Try to parse the full response as GeminiResponse
+                    return parseFullResponse(responseBody)
                 }
             }
 
-            // Alternative: try to parse as ActionPlan object
-            try {
-                val actionPlan = gson.fromJson(text, ActionPlan::class.java)
-                if (actionPlan.actions.isNotEmpty()) {
-                    return actionPlan.actions
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error parsing as ActionPlan: ${e.message}")
-            }
-
-            // If no JSON found, use fallback
-            Log.w(TAG, "No valid JSON found in response, using fallback")
-            return handleLocalCommandFallback(originalCommand)
+            // Try to parse the full response
+            return parseFullResponse(responseBody)
 
         } catch (e: Exception) {
-            Log.e(TAG, "Error parsing response: ${e.message}")
-            return handleLocalCommandFallback(originalCommand)
+            Log.e(TAG, "Parse error: ${e.message}")
+            return emptyList()
+        }
+    }
+
+    private fun parseFullResponse(responseBody: String): List<Action> {
+        try {
+            val geminiResponse = gson.fromJson(responseBody, GeminiResponse::class.java)
+            val text = geminiResponse.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: ""
+
+            if (text.isNotEmpty()) {
+                Log.d(TAG, "Direct parse text: ${text.take(100)}...")
+                // Try to extract JSON from text
+                val textJsonStart = text.indexOf('[')
+                val textJsonEnd = text.lastIndexOf(']')
+
+                if (textJsonStart >= 0 && textJsonEnd > textJsonStart) {
+                    val textJson = text.substring(textJsonStart, textJsonEnd + 1)
+                    val actions = gson.fromJson(textJson, Array<Action>::class.java)
+                    return actions.toList()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Full parse error: ${e.message}")
+        }
+
+        return emptyList()
+    }
+
+    // TEST FUNCTION to verify API works
+    suspend fun testApiConnection(): String {
+        return withContext(Dispatchers.IO) {
+            try {
+                val testPrompt = "Say 'JARVIS is working' in one word."
+
+                val requestBody = gson.toJson(
+                    GeminiRequest(
+                        contents = listOf(
+                            Content(
+                                parts = listOf(
+                                    Part(text = testPrompt)
+                                )
+                            )
+                        )
+                    )
+                )
+
+                val request = Request.Builder()
+                    .url(geminiProUrl)
+                    .post(requestBody.toRequestBody(jsonMediaType))
+                    .addHeader("Content-Type", "application/json")
+                    .build()
+
+                val response = client.newCall(request).execute()
+
+                return@withContext if (response.isSuccessful) {
+                    val body = response.body?.string()
+                    "✓ API Connected Successfully (${response.code})\nResponse: ${body?.take(100)}..."
+                } else {
+                    "✗ API Failed: ${response.code} - ${response.body?.string()}"
+                }
+            } catch (e: Exception) {
+                return@withContext "✗ Error: ${e.message}"
+            }
         }
     }
 }

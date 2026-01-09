@@ -23,9 +23,9 @@ class JarvisAccessibilityService : AccessibilityService() {
         var instance: JarvisAccessibilityService? = null
             private set
 
-        // Global action helpers for external use
-        fun performGlobalAction(action: Int) {
-            instance?.performGlobalAction(action)
+        // Static helper methods that forward to instance
+        fun performGlobalAction(action: Int): Boolean {
+            return instance?.performGlobalAction(action) ?: false
         }
 
         fun clickByText(text: String): Boolean {
@@ -42,6 +42,18 @@ class JarvisAccessibilityService : AccessibilityService() {
 
         fun getCurrentApp(): String? {
             return instance?.getCurrentApp()
+        }
+
+        fun clickAtCoordinates(x: Int, y: Int) {
+            instance?.clickAtCoordinates(x, y)
+        }
+
+        fun pressKey(keyCode: Int) {
+            instance?.pressKey(keyCode)
+        }
+
+        fun scroll(down: Boolean) {
+            instance?.scroll(down)
         }
     }
 
