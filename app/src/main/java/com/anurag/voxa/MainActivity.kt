@@ -259,7 +259,7 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, "Service instance is active", Toast.LENGTH_SHORT).show()
 
                 // Test a simple action
-                val success = JarvisAccessibilityService.clickByText("START")
+                val success = JarvisAccessibilityService.instance!!.clickByText("START")
                 Toast.makeText(this, "Click test: ${if (success) "Success" else "Failed"}", Toast.LENGTH_SHORT).show()
             } else {
                 Toast.makeText(this, "Service instance is null (restart app)", Toast.LENGTH_SHORT).show()

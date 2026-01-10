@@ -4,14 +4,12 @@ import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.*
 
-
 object ActionExecutor {
     private const val TAG = "ActionExecutor"
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     fun execute(actions: List<GeminiPlanner.Action>, context: Context? = null) {
         scope.launch {
-            // Check if accessibility service is available
             val accessibilityService = JarvisAccessibilityService.instance
             if (accessibilityService == null) {
                 Log.e(TAG, "Accessibility service not available")
@@ -25,93 +23,148 @@ object ActionExecutor {
 
             for ((index, action) in actions.withIndex()) {
                 try {
-                    Log.d(TAG, "Executing action $index: $action")
+                    Log.d(TAG, "Executing action $index/${actions.size}: ${action.type}")
 
-                    // Show in HUD
+                    // Update HUD
                     context?.let {
                         withContext(Dispatchers.Main) {
-                            FloatingHUD.update(it, "⚡ ${action.type}", FloatingHUD.STATE_EXECUTING)
+                            FloatingHUD.update(it,
+                                when (action.type) {
+                                    GeminiPlanner.ActionTypes.OPEN_APP -> "📱 Opening ${action.appName}"
+                                    GeminiPlanner.ActionTypes.CLICK -> "🎯 Clicking ${action.target}"
+                                    GeminiPlanner.ActionTypes.TYPE -> "📝 Typing..."
+                                    GeminiPlanner.ActionTypes.CALL -> "📞 Calling..."
+                                    GeminiPlanner.ActionTypes.MESSAGE -> "💬 Messaging..."
+                                    GeminiPlanner.ActionTypes.SEARCH -> "🔍 Searching..."
+                                    else -> "⚡ ${action.type}"
+                                },
+                                FloatingHUD.STATE_EXECUTING
+                            )
                         }
                     }
 
                     when (action.type) {
-                        "open_app" -> {
+                        GeminiPlanner.ActionTypes.OPEN_APP -> {
                             if (action.packageName.isNotEmpty()) {
                                 Log.d(TAG, "Opening app: ${action.packageName}")
                                 accessibilityService.openApp(action.packageName)
                                 delay(action.delay.toLong())
                             }
                         }
-                        "click" -> {
+                        GeminiPlanner.ActionTypes.CLICK -> {
                             if (action.target.isNotEmpty()) {
                                 Log.d(TAG, "Clicking: ${action.target}")
                                 val success = accessibilityService.clickByText(action.target)
-                                Log.d(TAG, "Click result: $success")
+                                if (!success) {
+                                    Log.w(TAG, "Click by text failed, trying alternative methods")
+                                    // Try clicking by content description or ID
+                                    accessibilityService.clickByDescription(action.target)
+                                }
                                 delay(action.delay.toLong())
-                            } else if (action.x > 0 && action.y > 0) {
-                                Log.d(TAG, "Clicking at coordinates: (${action.x}, ${action.y})")
-                                accessibilityService.clickAtCoordinates(action.x, action.y)
-                                delay(action.delay.toLong())
-                            } else {
-                                Log.e(TAG, "No valid click target provided")
                             }
                         }
-                        "type" -> {
+                        GeminiPlanner.ActionTypes.TYPE -> {
                             if (action.text.isNotEmpty()) {
                                 Log.d(TAG, "Typing: ${action.text}")
                                 accessibilityService.typeText(action.text)
                                 delay(action.delay.toLong())
                             }
                         }
-                        "send" -> {
-                            Log.d(TAG, "Sending (press Enter)")
+                        GeminiPlanner.ActionTypes.SEND -> {
+                            Log.d(TAG, "Sending (Enter key)")
                             accessibilityService.pressKey(android.view.KeyEvent.KEYCODE_ENTER)
                             delay(action.delay.toLong())
                         }
-                        "back" -> {
+                        GeminiPlanner.ActionTypes.CALL -> {
+                            Log.d(TAG, "Calling: ${action.contactName} - ${action.phoneNumber}")
+                            if (action.phoneNumber.isNotEmpty()) {
+                                accessibilityService.dialNumber(action.phoneNumber)
+                            } else if (action.contactName.isNotEmpty()) {
+                                accessibilityService.callContact(action.contactName)
+                            }
+                            delay(action.delay.toLong())
+                        }
+                        GeminiPlanner.ActionTypes.DIAL -> {
+                            Log.d(TAG, "Dialing: ${action.phoneNumber}")
+                            accessibilityService.dialNumber(action.phoneNumber)
+                            delay(action.delay.toLong())
+                        }
+                        GeminiPlanner.ActionTypes.BACK -> {
                             Log.d(TAG, "Going back")
                             accessibilityService.performGlobalAction(
                                 android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK
                             )
                             delay(action.delay.toLong())
                         }
-                        "home" -> {
+                        GeminiPlanner.ActionTypes.HOME -> {
                             Log.d(TAG, "Going home")
                             accessibilityService.performGlobalAction(
                                 android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME
                             )
                             delay(action.delay.toLong())
                         }
-                        "recents" -> {
+                        GeminiPlanner.ActionTypes.RECENTS -> {
                             Log.d(TAG, "Showing recents")
                             accessibilityService.performGlobalAction(
                                 android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_RECENTS
                             )
                             delay(action.delay.toLong())
                         }
-                        "scroll_up" -> {
-                            Log.d(TAG, "Scrolling up")
-                            accessibilityService.scroll(false)
-                            delay(action.delay.toLong())
-                        }
-                        "scroll_down" -> {
-                            Log.d(TAG, "Scrolling down")
-                            accessibilityService.scroll(true)
-                            delay(action.delay.toLong())
-                        }
-                        "wait" -> {
+                        GeminiPlanner.ActionTypes.WAIT -> {
                             Log.d(TAG, "Waiting for ${action.delay}ms")
+                            delay(action.delay.toLong())
+                        }
+                        GeminiPlanner.ActionTypes.SCREENSHOT -> {
+                            Log.d(TAG, "Taking screenshot")
+                            accessibilityService.takeScreenshot()
+                            delay(action.delay.toLong())
+                        }
+                        GeminiPlanner.ActionTypes.VOLUME_UP -> {
+                            Log.d(TAG, "Volume up (${action.count} times)")
+                            repeat(action.count) {
+                                accessibilityService.volumeUp()
+                                delay(200)
+                            }
+                            delay(action.delay.toLong())
+                        }
+                        GeminiPlanner.ActionTypes.VOLUME_DOWN -> {
+                            Log.d(TAG, "Volume down (${action.count} times)")
+                            repeat(action.count) {
+                                accessibilityService.volumeDown()
+                                delay(200)
+                            }
+                            delay(action.delay.toLong())
+                        }
+                        GeminiPlanner.ActionTypes.PLAY_PAUSE -> {
+                            Log.d(TAG, "Play/Pause media")
+                            accessibilityService.mediaPlayPause()
+                            delay(action.delay.toLong())
+                        }
+                        GeminiPlanner.ActionTypes.NEXT -> {
+                            Log.d(TAG, "Next media")
+                            accessibilityService.mediaNext()
+                            delay(action.delay.toLong())
+                        }
+                        GeminiPlanner.ActionTypes.PREVIOUS -> {
+                            Log.d(TAG, "Previous media")
+                            accessibilityService.mediaPrevious()
                             delay(action.delay.toLong())
                         }
                         else -> {
                             Log.w(TAG, "Unknown action type: ${action.type}")
+                            delay(500)
                         }
                     }
 
-                    // Small delay between actions
-                    if (index < actions.size - 1) {
-                        delay(500)
+                    // Progress indicator - FIXED: Using update method instead of updateProgress
+                    val progress = ((index + 1).toFloat() / actions.size * 100).toInt()
+                    context?.let {
+                        withContext(Dispatchers.Main) {
+                            // Use the existing update method or create updateProgress method
+                            FloatingHUD.update(it, "Progress: $progress%", FloatingHUD.STATE_EXECUTING)
+                        }
                     }
+
                 } catch (e: Exception) {
                     Log.e(TAG, "Error executing action $action: ${e.message}")
                     context?.let {
@@ -119,22 +172,28 @@ object ActionExecutor {
                             FloatingHUD.showError(it, "Action failed: ${action.type}")
                         }
                     }
+                    // Continue with next action
                 }
             }
 
             // Final success message
             context?.let {
                 withContext(Dispatchers.Main) {
-                    FloatingHUD.showSuccess(it, "All actions completed")
+                    FloatingHUD.showSuccess(it, "✅ Task completed!")
                 }
             }
         }
     }
 
-    // Add test function
-    fun testActions(context: Context) {
+    fun stopExecution() {
+        scope.coroutineContext.cancelChildren()
+        Log.d(TAG, "Execution stopped")
+    }
+
+    // Enhanced test function - FIXED: Made all calls within coroutine scope
+    fun testAllActions(context: Context) {
         scope.launch {
-            Log.d(TAG, "Testing basic actions...")
+            Log.d(TAG, "Testing all action types...")
 
             val accessibilityService = JarvisAccessibilityService.instance
             if (accessibilityService == null) {
@@ -144,26 +203,54 @@ object ActionExecutor {
                 return@launch
             }
 
-            // Test 1: Go home
-            withContext(Dispatchers.Main) {
-                FloatingHUD.update(context, "Testing: Going Home", FloatingHUD.STATE_EXECUTING)
-            }
-
-            accessibilityService.performGlobalAction(
-                android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME
+            val testActions = listOf(
+                "Home" to suspend {
+                    withContext(Dispatchers.Main) {
+                        FloatingHUD.update(context, "Testing: Home", FloatingHUD.STATE_EXECUTING)
+                    }
+                    accessibilityService.performGlobalAction(
+                        android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME
+                    )
+                    delay(2000)
+                },
+                "Open Settings" to suspend {
+                    withContext(Dispatchers.Main) {
+                        FloatingHUD.update(context, "Testing: Open Settings", FloatingHUD.STATE_EXECUTING)
+                    }
+                    accessibilityService.openApp("com.android.settings")
+                    delay(3000)
+                },
+                "Back" to suspend {
+                    withContext(Dispatchers.Main) {
+                        FloatingHUD.update(context, "Testing: Back", FloatingHUD.STATE_EXECUTING)
+                    }
+                    accessibilityService.performGlobalAction(
+                        android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK
+                    )
+                    delay(2000)
+                },
+                "Recents" to suspend {
+                    withContext(Dispatchers.Main) {
+                        FloatingHUD.update(context, "Testing: Recents", FloatingHUD.STATE_EXECUTING)
+                    }
+                    accessibilityService.performGlobalAction(
+                        android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_RECENTS
+                    )
+                    delay(2000)
+                }
             )
-            delay(2000)
 
-            // Test 2: Open settings
-            withContext(Dispatchers.Main) {
-                FloatingHUD.update(context, "Testing: Opening Settings", FloatingHUD.STATE_EXECUTING)
+            testActions.forEach { (name, action) ->
+                try {
+                    action() // This is now a suspend function call
+                    Log.d(TAG, "✓ $name test passed")
+                } catch (e: Exception) {
+                    Log.e(TAG, "✗ $name test failed: ${e.message}")
+                }
             }
 
-            accessibilityService.openApp("com.android.settings")
-            delay(3000)
-
             withContext(Dispatchers.Main) {
-                FloatingHUD.showSuccess(context, "Test completed!")
+                FloatingHUD.showSuccess(context, "✅ All tests completed!")
             }
         }
     }
